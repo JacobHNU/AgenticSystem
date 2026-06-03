@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  agent-core:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=agent_core_pw
+      - MYSQL_DATABASE=agent_core
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ADMIN_API_KEY=admin-secret-key
+      - EMBEDDING_API_URL=http://embedding:8081/embed
+      - EMBEDDING_API_KEY=test-key
+      - MCP_DISCOVERY_URL=http://mcp-discovery:8080
+    volumes:
+      - ../skills:/app/skills
+      - ../workflows:/app/workflows
+      - ../config:/app/config
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: agent_core_pw
+      MYSQL_DATABASE: agent_core
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:

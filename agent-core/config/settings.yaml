@@ -1,0 +1,63 @@
+app:
+  name: agent-core
+  version: "1.0.0"
+  host: "0.0.0.0"
+  port: 8000
+  admin_api_key: "${ADMIN_API_KEY}"
+
+agent:
+  max_iterations: 10
+  checkpoint_interval: 3
+  max_memory_size: 50
+  max_concurrent_agents: 100
+
+skill:
+  skills_dir: ./skills
+  max_history_versions: 3
+  match_top_k: 3
+  embedding:
+    model_name: bge-large-zh-v1.5
+    api_url: "${EMBEDDING_API_URL}"
+    api_key: "${EMBEDDING_API_KEY}"
+    dimension: 1024
+
+workflow:
+  workflows_dir: ./workflows
+  max_degradation_depth: 2
+  default_retry_attempts: 3
+
+mcp:
+  discovery_url: "${MCP_DISCOVERY_URL:http://mcp-discovery:8080}"
+  connection_pool_size: 10
+  request_timeout: 30
+  circuit_breaker:
+    failure_threshold: 5
+    recovery_timeout: 60
+
+context:
+  token_limit: 4000
+  sensitive_fields: [phone, id_card, email, bank_card]
+  masking_rules_path: ./config/masking_rules.yaml
+
+mysql:
+  host: "${MYSQL_HOST:localhost}"
+  port: "${MYSQL_PORT:3306}"
+  database: agent_core
+  user: "${MYSQL_USER:root}"
+  password: "${MYSQL_PASSWORD}"
+  pool_size: 10
+
+redis:
+  host: "${REDIS_HOST:localhost}"
+  port: "${REDIS_PORT:6379}"
+  db: 0
+  ttl: 3600
+
+logging:
+  level: INFO
+  format: json
+  trace_id_header: X-Trace-Id
+
+prometheus:
+  enabled: true
+  port: 9090

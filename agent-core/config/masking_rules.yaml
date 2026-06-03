@@ -1,0 +1,16 @@
+masking_rules:
+  - name: phone
+    regex: '(\d{3})\d{4}(\d{4})'
+    replacement: '\1****\2'
+  - name: id_card
+    regex: '(\d{6})\d{8}(\d{4})'
+    replacement: '\1********\2'
+  - name: email
+    regex: '(.{2}).+(@.+)'
+    replacement: '\1***\2'
+  - name: bank_card
+    regex: '(\d{4})\d+(\d{4})'
+    replacement: '\1 **** **** \2'
+  - name: salary
+    regex: '(\d+).*'
+    replacement: '***'

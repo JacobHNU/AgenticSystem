@@ -1,0 +1,19 @@
+agent:
+  max_iterations: 3
+  checkpoint_interval: 1
+
+skill:
+  embedding:
+    api_url: "http://localhost:8081/embed"
+    api_key: "test-key"
+
+mysql:
+  host: localhost
+  database: agent_core_test
+  password: "test"
+
+redis:
+  db: 1
+
+logging:
+  level: DEBUG
