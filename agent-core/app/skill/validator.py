@@ -21,12 +21,18 @@ class SkillValidator:
             errors.append("missing 'name'")
         if not skill_def.version:
             errors.append("missing 'version'")
-        if not skill_def.workflows.main:
-            errors.append("missing 'workflows.main'")
 
-        # Workflow existence
-        if skill_def.workflows.main and skill_def.workflows.main not in workflow_registry:
-            errors.append(f"workflow '{skill_def.workflows.main}' not found")
+        # Type-specific validation
+        if skill_def.type == "fixed":
+            if not skill_def.workflows.main:
+                errors.append("missing 'workflows.main' (required for fixed skills)")
+            if skill_def.workflows.main and skill_def.workflows.main not in workflow_registry:
+                errors.append(f"workflow '{skill_def.workflows.main}' not found")
+        elif skill_def.type == "flexible":
+            if not skill_def.process_description:
+                errors.append("flexible skill requires 'process_description'")
+            if skill_def.workflows.main and skill_def.workflows.main not in workflow_registry:
+                errors.append(f"workflow '{skill_def.workflows.main}' not found")
 
         for fallback in skill_def.workflows.degradation_policy.fallbacks:
             if fallback.workflow and fallback.workflow not in workflow_registry:

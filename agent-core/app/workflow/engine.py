@@ -2,10 +2,13 @@ import re
 import json
 import asyncio
 import logging
-from typing import Dict, Any, Optional
+import time
+import yaml
+from pathlib import Path
+from typing import Dict, Any, Optional, List, Set
 
 from .models import (
-    WorkflowDefinition, WorkflowStep, StepType, StepResult, WorkflowResult, StepStatus
+    WorkflowDefinition, WorkflowStep, StepType, StepResult, WorkflowResult, StepStatus, WorkflowMetrics
 )
 from .context import WorkflowContext
 from ..core.trace import TraceContext
@@ -14,13 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowEngine:
-    """Workflow execution engine"""
+    """Workflow execution engine with parallel support and metrics"""
 
-    def __init__(self, mcp_client=None, context_builder=None, llm_client=None):
+    def __init__(self, mcp_client=None, context_builder=None, llm_client=None, workflows_dir: str = "./workflows"):
         self.definitions: Dict[str, WorkflowDefinition] = {}
         self.mcp_client = mcp_client
         self.context_builder = context_builder
         self.llm_client = llm_client
+        self.workflows_dir = Path(workflows_dir)
 
     async def execute(
         self,
@@ -29,45 +33,89 @@ class WorkflowEngine:
         trace_id: str = None
     ) -> WorkflowResult:
         trace_id = trace_id or TraceContext.get_or_create()
+        start_time = time.time()
 
         workflow = self.definitions.get(workflow_name)
         if not workflow:
             return WorkflowResult(status="failed", error=f"Workflow '{workflow_name}' not found")
 
-        for step in workflow.steps:
+        metrics = WorkflowMetrics()
+        completed_steps: Set[str] = set()
+        failed_step: Optional[str] = None
+        error_msg: Optional[str] = None
+
+        # Helper to execute a single step
+        async def run_step(step: WorkflowStep):
+            nonlocal failed_step, error_msg
+            if failed_step:
+                return
+
+            # Wait for dependencies
+            for dep in step.depends_on:
+                while dep not in completed_steps and not failed_step:
+                    await asyncio.sleep(0.1)
+            
+            if failed_step:
+                return
+
             # 1. Condition evaluation
             if step.condition and not self._evaluate_condition(context, step.condition):
                 context.add_history(step.name, StepStatus.SKIPPED)
-                continue
+                completed_steps.add(step.name)
+                return
 
             # 2. Build input
             step_input = self._build_input(context, step.input_template)
 
             # 3. Execute by type
-            if step.type == StepType.MCP_TOOL:
-                result = await self._execute_mcp_tool(step, step_input, trace_id)
-            elif step.type == StepType.LLM_REASONING:
-                result = await self._execute_llm_reasoning(step, step_input, context, trace_id)
-            elif step.type == StepType.SUB_WORKFLOW:
-                result = await self._execute_sub_workflow(step, context, trace_id)
-            elif step.type == StepType.SKILL_CALL:
-                result = await self._execute_skill_call(step, step_input, trace_id)
-            else:
-                result = StepResult(status="failed", error=f"Unknown step type: {step.type}")
+            step_start = time.time()
+            try:
+                if step.type == StepType.MCP_TOOL:
+                    metrics.tool_calls += 1
+                    result = await self._execute_mcp_tool(step, step_input, trace_id)
+                elif step.type == StepType.LLM_REASONING:
+                    metrics.llm_calls += 1
+                    result = await self._execute_llm_reasoning(step, step_input, context, trace_id)
+                elif step.type == StepType.SUB_WORKFLOW:
+                    result = await self._execute_sub_workflow(step, context, trace_id)
+                    # Merge sub-workflow metrics if available
+                    # (Simplified for now)
+                elif step.type == StepType.SKILL_CALL:
+                    result = await self._execute_skill_call(step, step_input, trace_id)
+                else:
+                    result = StepResult(status="failed", error=f"Unknown step type: {step.type}")
+            except Exception as e:
+                result = StepResult(status="failed", error=str(e))
+            
+            result.duration_ms = (time.time() - step_start) * 1000
 
             # 4. Handle result
             if result.status == "success":
                 context.set(step.output_key, result.data)
                 context.add_history(step.name, StepStatus.COMPLETED, result.data)
+                completed_steps.add(step.name)
             else:
                 context.add_history(step.name, StepStatus.FAILED, result.error)
-                return WorkflowResult(
-                    status="failed", error=result.error,
-                    data=context.data, history=context.history
-                )
+                failed_step = step.name
+                error_msg = result.error
+
+        # Schedule all steps
+        tasks = [asyncio.create_task(run_step(step)) for step in workflow.steps]
+        await asyncio.gather(*tasks)
+
+        metrics.total_duration_ms = (time.time() - start_time) * 1000
+        metrics.completion_rate = len([h for h in context.history if h["status"] == StepStatus.COMPLETED]) / len(workflow.steps)
+
+        if failed_step:
+            return WorkflowResult(
+                status="failed", error=error_msg,
+                data=context.data, history=context.history,
+                metrics=metrics
+            )
 
         return WorkflowResult(
-            status="success", data=context.data, history=context.history
+            status="success", data=context.data, history=context.history,
+            metrics=metrics
         )
 
     def _build_input(self, ctx: WorkflowContext, template: Dict[str, Any]) -> Dict[str, Any]:
@@ -98,6 +146,38 @@ class WorkflowEngine:
             expected = expected.strip().strip('"\'')
             return str(value) == expected
         return True
+
+    async def save_definition(self, definition: WorkflowDefinition) -> bool:
+        """Persist a workflow definition to disk as YAML."""
+        try:
+            self.workflows_dir.mkdir(parents=True, exist_ok=True)
+            file_path = self.workflows_dir / f"{definition.name}.yaml"
+            data = definition.model_dump()
+            with open(file_path, 'w', encoding='utf-8') as f:
+                yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+            logger.info(f"Workflow '{definition.name}' saved to {file_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save workflow '{definition.name}': {e}")
+            return False
+
+    async def load_definitions_from_disk(self) -> int:
+        """Load all workflow YAML files from the workflows directory at startup."""
+        if not self.workflows_dir.exists():
+            return 0
+        count = 0
+        for yaml_file in self.workflows_dir.glob("*.yaml"):
+            try:
+                with open(yaml_file, 'r', encoding='utf-8') as f:
+                    data = yaml.safe_load(f)
+                if data:
+                    definition = WorkflowDefinition(**data)
+                    self.definitions[definition.name] = definition
+                    count += 1
+            except Exception as e:
+                logger.error(f"Failed to load workflow from {yaml_file}: {e}")
+        logger.info(f"Loaded {count} workflow definitions from disk")
+        return count
 
     async def _execute_mcp_tool(self, step: WorkflowStep, step_input: Dict, trace_id: str) -> StepResult:
         """Execute MCP tool step with retry"""

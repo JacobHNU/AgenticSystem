@@ -75,6 +75,8 @@ class SkillDefinition(BaseModel):
     description: str = ""
     domain: str = ""
     tags: List[str] = []
+    type: Literal["fixed", "flexible"] = "fixed"
+    process_description: Optional[str] = None
     intent: IntentConfig = IntentConfig()
     activation_rules: Optional[ActivationRules] = None
     workflows: WorkflowsConfig = WorkflowsConfig(main="")
@@ -134,6 +136,7 @@ class SkillResult(BaseModel):
     data: Dict[str, Any] = {}
     error: Optional[str] = None
     degradation_info: Optional[DegradationInfo] = None
+    metrics: Optional[Dict[str, Any]] = None
 
 
 class IntentMatch(BaseModel):

@@ -26,6 +26,11 @@ workflow:
   max_degradation_depth: 2
   default_retry_attempts: 3
 
+workflow_lifecycle:
+  enable_post_evaluation: false
+  fast_path_confidence_threshold: 0.6
+  auto_persist_workflows: true
+
 mcp:
   discovery_url: "${MCP_DISCOVERY_URL:http://mcp-discovery:8080}"
   connection_pool_size: 10

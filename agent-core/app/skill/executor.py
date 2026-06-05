@@ -12,12 +12,13 @@ logger = logging.getLogger(__name__)
 
 
 class SkillExecutor:
-    """Skill executor with degradation support"""
+    """Skill executor with degradation support and dynamic building"""
 
-    def __init__(self, workflow_engine, context_builder, mcp_client=None):
+    def __init__(self, workflow_engine, context_builder, mcp_client=None, dynamic_builder=None):
         self.workflow_engine = workflow_engine
         self.context_builder = context_builder
         self.mcp_client = mcp_client
+        self.dynamic_builder = dynamic_builder
 
     async def execute(
         self,
@@ -27,9 +28,28 @@ class SkillExecutor:
         max_iterations: int = None
     ) -> SkillResult:
         trace_id = trace_id or uuid.uuid4().hex[:16]
-        logger.info(f"[{trace_id}] Execute skill: {skill_def.name}")
+        logger.info(f"[{trace_id}] Execute skill: {skill_def.name} (type: {skill_def.type})")
 
-        # Build context (six layers)
+        # 1. Dynamic workflow building for flexible skills
+        workflow_name = skill_def.workflows.main
+        if skill_def.type == "flexible" and self.dynamic_builder:
+            logger.info(f"[{trace_id}] Building dynamic workflow for {skill_def.name}")
+            # Get available tools from context or discovery
+            tools = []
+            if self.mcp_client and hasattr(self.mcp_client, 'discovery'):
+                tools = await self.mcp_client.discovery.list_tools(domain=skill_def.domain)
+            
+            dynamic_wf = await self.dynamic_builder.build_workflow(
+                skill_def.name, skill_def.process_description, tools, trace_id
+            )
+            if dynamic_wf:
+                workflow_name = dynamic_wf.name
+                self.workflow_engine.definitions[workflow_name] = dynamic_wf
+                logger.info(f"[{trace_id}] Dynamic workflow '{workflow_name}' registered")
+            else:
+                return SkillResult(status="failed", error="Failed to build dynamic workflow")
+
+        # 2. Build context (six layers)
         from ..context.models import ContextBuildRequest
         request = ContextBuildRequest(
             layers_config={k: v for k, v in skill_def.context.layers.items()},
@@ -39,16 +59,27 @@ class SkillExecutor:
         )
         context_result = await self.context_builder.build(request)
 
-        # Execute with degradation
+        # 3. Execute with degradation
         from ..workflow.context import WorkflowContext
         wf_context = WorkflowContext(data=params)
 
-        return await self._execute_with_degradation(
+        result = await self._execute_with_degradation(
             skill_def=skill_def,
-            workflow_name=skill_def.workflows.main,
+            workflow_name=workflow_name,
             context=wf_context,
             trace_id=trace_id
         )
+
+        # 4. Attach metrics to result
+        # We need to find a way to get metrics from WorkflowEngine. 
+        # In a real system, execute_with_degradation would return them.
+        # For now, let's assume result might have them or we extract from engine.
+        
+        # 5. Solidification: Promote dynamic workflow if successful
+        if result.status == "success" and skill_def.type == "flexible":
+            result.data["_dynamic_workflow"] = self.workflow_engine.definitions.get(workflow_name).model_dump()
+        
+        return result
 
     async def _execute_with_degradation(
         self,
@@ -87,6 +118,7 @@ class SkillExecutor:
                 return SkillResult(
                     status="degraded_success",
                     data=wf_result.data,
+                    metrics=wf_result.metrics.model_dump(),
                     degradation_info=DegradationInfo(
                         original_error="",
                         trigger_type="degraded",
@@ -95,7 +127,11 @@ class SkillExecutor:
                         timestamp=datetime.now()
                     )
                 )
-            return SkillResult(status="success", data=wf_result.data)
+            return SkillResult(
+                status="success", 
+                data=wf_result.data,
+                metrics=wf_result.metrics.model_dump()
+            )
 
         # Failed - try degradation
         policy = skill_def.workflows.degradation_policy
@@ -104,6 +140,8 @@ class SkillExecutor:
         if not matched_fallback or matched_fallback.action == "escalate":
             return SkillResult(
                 status="failed",
+                error=wf_result.error,
+                metrics=wf_result.metrics.model_dump(),
                 degradation_info=DegradationInfo(
                     original_error=wf_result.error,
                     trigger_type="escalate",

@@ -5,6 +5,18 @@ from app.skill.models import (
     SkillDefinition, WorkflowsConfig, DegradationPolicy, FallbackEntry,
     ContextConfig, SkillResult
 )
+from app.workflow.models import WorkflowMetrics
+
+
+def _mock_wf_result(status, data=None, error=None):
+    """Create a mock workflow result with metrics."""
+    return type("R", (), {
+        "status": status,
+        "data": data or {},
+        "error": error,
+        "history": [],
+        "metrics": WorkflowMetrics()
+    })()
 
 
 class TestSkillExecutor:
@@ -13,8 +25,8 @@ class TestSkillExecutor:
         engine = AsyncMock()
         # First call fails, second succeeds (degradation)
         engine.execute = AsyncMock(side_effect=[
-            type("R", (), {"status": "failed", "error": "tool_unavailable", "data": {}})(),
-            type("R", (), {"status": "success", "data": {"result": "ok"}, "history": []})()
+            _mock_wf_result("failed", error="tool_unavailable"),
+            _mock_wf_result("success", data={"result": "ok"})
         ])
         return engine
 
@@ -31,7 +43,7 @@ class TestSkillExecutor:
     @pytest.mark.asyncio
     async def test_success_path(self, executor, workflow_engine):
         workflow_engine.execute = AsyncMock(
-            return_value=type("R", (), {"status": "success", "data": {"ok": True}, "history": []})()
+            return_value=_mock_wf_result("success", data={"ok": True})
         )
         skill_def = SkillDefinition(
             name="test",

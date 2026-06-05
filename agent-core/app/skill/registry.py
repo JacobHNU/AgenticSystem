@@ -66,6 +66,33 @@ class SkillRegistry:
     def count(self) -> int:
         return len(self._skills)
 
+    async def promote_skill(self, name: str, workflow_def: Any):
+        """Solidify a flexible skill into a fixed one with the provided workflow"""
+        async with self._lock:
+            versioned = self._skills.get(name)
+            if not versioned:
+                return
+
+            # Update definition
+            new_def = versioned.definition.model_copy(deep=True)
+            new_def.type = "fixed"
+            new_def.workflows.main = workflow_def.name
+            
+            # Save history
+            if name not in self._history:
+                self._history[name] = []
+            self._history[name].append(versioned)
+            if len(self._history[name]) > self._max_history:
+                self._history[name] = self._history[name][-self._max_history:]
+
+            # Update current
+            self._skills[name] = VersionedDefinition(
+                version=versioned.version + 1,
+                definition=new_def,
+                created_at=datetime.now()
+            )
+            logger.info(f"Skill '{name}' promoted to fixed mode (v{self._skills[name].version})")
+
     async def replace_all(self, new_skills: Dict[str, SkillDefinition]):
         async with self._lock:
             old_skills = self._skills.copy()

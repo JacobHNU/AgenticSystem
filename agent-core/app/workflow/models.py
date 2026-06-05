@@ -42,6 +42,8 @@ class WorkflowStep(BaseModel):
     domain: Optional[str] = None
     prompt_template: Optional[str] = None
     output_schema: Optional[Dict[str, str]] = None
+    # For parallel execution
+    depends_on: List[str] = []
 
 
 class WorkflowDefinition(BaseModel):
@@ -55,6 +57,15 @@ class StepResult(BaseModel):
     status: str
     data: Dict[str, Any] = {}
     error: Optional[str] = None
+    duration_ms: float = 0.0
+
+
+class WorkflowMetrics(BaseModel):
+    total_duration_ms: float = 0.0
+    tool_calls: int = 0
+    llm_calls: int = 0
+    token_usage: int = 0
+    completion_rate: float = 0.0
 
 
 class WorkflowResult(BaseModel):
@@ -62,3 +73,4 @@ class WorkflowResult(BaseModel):
     data: Dict[str, Any] = {}
     error: Optional[str] = None
     history: List[Dict[str, Any]] = []
+    metrics: WorkflowMetrics = WorkflowMetrics()

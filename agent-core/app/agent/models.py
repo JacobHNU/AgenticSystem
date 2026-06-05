@@ -1,5 +1,13 @@
+from enum import Enum
 from typing import Any, Dict, List, Optional, Literal
 from pydantic import BaseModel
+
+
+class ExecutionMode(str, Enum):
+    """Agent loop execution mode"""
+    FAST_PATH = "fast_path"      # Fixed skill with existing workflow, skip Think/Reflect
+    BUILD_PATH = "build_path"    # Flexible skill, build workflow then execute
+    REACT = "react"              # Full ReAct cycle fallback
 
 
 class Thought(BaseModel):
@@ -22,6 +30,7 @@ class ActionResult(BaseModel):
     error_type: Optional[str] = None
     retry_after: Optional[float] = None
     degradation_info: Optional[Dict[str, Any]] = None
+    metrics: Optional[Dict[str, Any]] = None
 
 
 class Observation(BaseModel):
@@ -42,6 +51,7 @@ class Reflection(BaseModel):
     reason: str = ""
     update_memory: List[str] = []
     update_scratch_pad: Dict[str, Any] = {}
+    solidify_workflow: bool = False
 
 
 class TaskResult(BaseModel):
@@ -50,8 +60,10 @@ class TaskResult(BaseModel):
     data: Dict[str, Any] = {}
     message: str = ""
     degradation_info: Optional[Dict[str, Any]] = None
+    execution_report: Optional[Dict[str, Any]] = None
     total_iterations: int = 0
     trace_id: str = ""
+    execution_mode: ExecutionMode = ExecutionMode.REACT
 
 
 # Rebuild to resolve forward reference from Reflection -> TaskResult
